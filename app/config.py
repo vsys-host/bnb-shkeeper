@@ -52,8 +52,6 @@ config = {
     'MIN_TRANSFER_THRESHOLD': Decimal(os.environ.get('MIN_TRANSFER_THRESHOLD', '0.0005')),
     'MIN_TOKEN_TRANSFER_THRESHOLD': Decimal(os.environ.get('MIN_TOKEN_TRANSFER_THRESHOLD', '0.5')), 
     
-
-
 }
 
 def get_min_token_transfer_threshold(symbol):
