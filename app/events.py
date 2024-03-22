@@ -105,6 +105,8 @@ def events_listener():
         except Exception as e:
             sleep_sec = 60
             logger.exception(f"Exception in main block scanner loop: {e}")
+            current_block_number = w3.eth.block_number
+            logger.warning(f'Last block in fullnode is {current_block_number}.If this is the current block in the blockchain - add the environment variable LAST_BLOCK_LOCKED = "False" to the deployment')
             logger.warning(f"Waiting {sleep_sec} seconds before retry.")
             time.sleep(sleep_sec)
 
