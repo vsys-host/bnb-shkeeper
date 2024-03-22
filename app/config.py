@@ -3,7 +3,7 @@ from decimal import Decimal
 
 config = {
 
-    'FULLNODE_URL': os.environ.get('FULLNODE_URL', 'http://bnb:8575'),
+    'FULLNODE_URL': os.environ.get('FULLNODE_URL', 'http://bnb:8545'),
     'COIN_SYMBOL':  os.environ.get('COIN_SYMBOL', 'BNB'),
     'FULLNODE_TIMEOUT': os.environ.get('FULLNODE_TIMEOUT', '60'),
     'CHECK_NEW_BLOCK_EVERY_SECONDS': os.environ.get('CHECK_NEW_BLOCK_EVERY_SECONDS',2),
