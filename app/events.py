@@ -12,10 +12,10 @@ import time
 from web3 import Web3, HTTPProvider
 from web3.middleware import geth_poa_middleware 
 
-from .models import Settings, db
+from .models import Settings, db, Wallets, Accounts
 from .config import config, get_contract_abi, get_contract_address
 from .logging import logger
-from .token import Token
+from .token import Token, get_all_accounts
 
 
 
@@ -34,8 +34,6 @@ def log_loop(last_checked_block, check_interval):
 
     while True:
         
-        list_accounts = w3.geth.personal.list_accounts()
-        list_accounts = set(list_accounts)
         last_block =  w3.eth.block_number
         if last_checked_block == '' or last_checked_block is None:
             last_checked_block = last_block
@@ -44,18 +42,17 @@ def log_loop(last_checked_block, check_interval):
             logger.exception(f'Last checked block {last_checked_block} is bigger than last block {last_block} in blockchain')
         elif last_checked_block == last_block - 2:
             pass
-        else:            
-            for x in range(last_checked_block + 1, last_block):   
-
-                logger.warning(f"now checking block {x}")
-                                
-                block = w3.eth.getBlock(x, True)
-                                
+        else:      
+            list_accounts = set(get_all_accounts()) 
+            for x in range(last_checked_block + 1, last_block):
+                logger.warning(f"now checking block {x}")                
+                block = w3.eth.getBlock(x, True)       
                 for transaction in block.transactions:
                     if transaction['to'] in list_accounts or transaction['from'] in list_accounts:
                         handle_event(transaction)
                         walletnotify_shkeeper.delay(config["COIN_SYMBOL"], transaction['hash'].hex())
-                        if (transaction['to'] in list_accounts and transaction['from']  not in list_accounts) and ((w3.eth.block_number - x) < 40):
+                        if ((transaction['to'] in list_accounts and transaction['from']  not in list_accounts) and 
+                            ((w3.eth.block_number - x) < 40)):
                             drain_account.delay(config["COIN_SYMBOL"], transaction['to'])
 
                 
@@ -63,11 +60,14 @@ def log_loop(last_checked_block, check_interval):
                     token_instance  = Token(token)
                     transfers = token_instance.get_all_transfers(x, x)
                     for transaction in transfers:
-                        if transaction['args']['from'] in list_accounts or  transaction['args']['to'] in list_accounts:
+                        if (token_instance.provider.toChecksumAddress(transaction['from']) in list_accounts or 
+                            token_instance.provider.toChecksumAddress(transaction['to']) in list_accounts):
                             handle_event(transaction)
-                            walletnotify_shkeeper.delay(token, transaction['transactionHash'].hex())
-                            if (transaction['args']['from'] not in list_accounts and transaction['args']['to'] in list_accounts) and ((w3.eth.block_number - x) < 40):
-                                drain_account.delay(token, transaction['args']['to'])
+                            walletnotify_shkeeper.delay(token, transaction['txid'])
+                            if ((token_instance.provider.toChecksumAddress(transaction['from']) not in list_accounts and 
+                                token_instance.provider.toChecksumAddress(transaction['to']) in list_accounts) and 
+                                ((w3.eth.block_number - x) < 40)):
+                                drain_account.delay(token, token_instance.provider.toChecksumAddress(transaction['to']))
                 
                 last_checked_block = x # TODO store this value in database
 
@@ -99,15 +99,20 @@ def events_listener():
     
     while True:
         try:
+            pd = Wallets.query.all()
+            pd2 = Accounts.query.all()
+            if ((not pd) and pd2) or (config['FORCE_ADD_WALLETS_TO_DB'].lower() == 'true'):
+                logger.warning(f"Wallets should be moved to the database. Creating task.")
+                from .tasks import move_accounts_to_db
+                move_accounts_to_db.delay()
             pd = Settings.query.filter_by(name = "last_block").first()
             last_checked_block = int(pd.value)
+
             log_loop(last_checked_block, int(config["CHECK_NEW_BLOCK_EVERY_SECONDS"]))
         except Exception as e:
             sleep_sec = 60
             logger.exception(f"Exception in main block scanner loop: {e}")
-            current_block_number = w3.eth.block_number
-            logger.warning(f'Last block in fullnode is {current_block_number}.If this is the current block in the blockchain - add the environment variable LAST_BLOCK_LOCKED = "False" to the deployment')
-            logger.warning(f"Waiting {sleep_sec} seconds before retry.")
+            logger.warning(f"Waiting {sleep_sec} seconds before retry.")           
             time.sleep(sleep_sec)
 
 

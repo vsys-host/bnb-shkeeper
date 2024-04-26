@@ -9,8 +9,9 @@ import requests
 
 from .. import events
 from ..config import config
-from ..models import Accounts, Settings, db
-from ..token import Token, Coin
+from ..encryption import Encryption
+from ..models import Accounts, Settings, db, Wallets
+from ..token import Token, Coin, get_all_accounts
 from ..logging import logger
 from . import api
 from app import create_app
@@ -25,20 +26,30 @@ app.app_context().push()
 
 @api.post("/generate-address")
 def generate_new_address():    
-    new_address = w3.geth.personal.new_account(get_account_password())
+    acc = w3.eth.account.create()
     crypto_str = str(g.symbol)
-    with app.app_context():
-        db.session.add(Accounts(address = new_address, 
-                                            crypto = crypto_str,
-                                            amount = 0,
-                                            ))
-        
-        db.session.commit()
-        db.session.close()
-        db.session.remove()
-        db.engine.dispose()
-    logger.info(f'Added new address to DB')
-    return {'status': 'success', 'address': new_address}
+    e = Encryption
+    logger.warning(f'Saving wallet {acc.address} to DB')
+    try:
+        with app.app_context():
+            db.session.add(Wallets(pub_address = acc.address, 
+                                    priv_key = e.encrypt(acc.key.hex()),
+                                    type = "regular",
+                                    ))
+            db.session.add(Accounts(address = acc.address, 
+                                         crypto = crypto_str,
+                                         amount = 0,
+                                         ))
+            db.session.commit()
+            db.session.close()
+            db.engine.dispose() 
+    finally:
+        with app.app_context():
+            db.session.remove()
+            db.engine.dispose() 
+
+    logger.info(f'Added new address and wallet added to DB')
+    return {'status': 'success', 'address': acc.address}
 
 @api.post('/balance')
 def get_balance():
@@ -66,7 +77,7 @@ def get_status():
 @api.post('/transaction/<txid>')
 def get_transaction(txid):
     related_transactions = []
-    list_accounts = w3.geth.personal.list_accounts()
+    list_accounts = get_all_accounts()
     if g.symbol == config["COIN_SYMBOL"]:
         try:
             transaction = w3.eth.get_transaction(txid)
@@ -99,23 +110,25 @@ def get_transaction(txid):
                 return {'status': 'error', 'msg': 'txid is not found for this crypto '}
             logger.warning(transactions_array)
             for transaction in transactions_array:
-                if (transaction['args']['to'] in list_accounts) and (transaction['args']['from'] in list_accounts):
-                    address = transaction['args']["from"]
+                if ((token_instance.provider.toChecksumAddress(transaction['to']) in list_accounts) and 
+                    (token_instance.provider.toChecksumAddress(transaction['from']) in list_accounts)):
+                    address = token_instance.provider.toChecksumAddress(transaction["from"])
                     category = 'internal'
-                    amount = Decimal(transaction['args'][amount_name]) / Decimal(10** (token_instance.contract.functions.decimals().call()))
-                    confirmations = int(w3.eth.blockNumber) - int(transaction["blockNumber"])
+                    amount = Decimal(transaction["amount"]) / Decimal(10** (token_instance.contract.functions.decimals().call()))
+                    confirmations = int(w3.eth.blockNumber) - int(transaction["block_number"])
                     related_transactions.append([address, amount, confirmations, category])
-                elif transaction['args']['to'] in list_accounts:
-                    address = transaction['args']["to"]
+
+                elif token_instance.provider.toChecksumAddress(transaction['to']) in list_accounts:
+                    address = token_instance.provider.toChecksumAddress(transaction["to"])
                     category = 'receive'
-                    amount = Decimal(transaction['args'][amount_name]) / Decimal(10** (token_instance.contract.functions.decimals().call()))
-                    confirmations = int(w3.eth.blockNumber) - int(transaction["blockNumber"])
+                    amount = Decimal(transaction["amount"]) / Decimal(10** (token_instance.contract.functions.decimals().call()))
+                    confirmations = int(w3.eth.blockNumber) - int(transaction["block_number"])
                     related_transactions.append([address, amount, confirmations, category])
-                elif transaction['args']['from'] in list_accounts:                
-                    address = transaction['args']["from"]
+                elif token_instance.provider.toChecksumAddress(transaction['from']) in list_accounts:                
+                    address = token_instance.provider.toChecksumAddress(transaction["from"])
                     category = 'send'
-                    amount = Decimal(transaction['args'][amount_name]) / Decimal(10** (token_instance.contract.functions.decimals().call()))
-                    confirmations = int(w3.eth.blockNumber) - int(transaction["blockNumber"])
+                    amount = Decimal(transaction["amount"]) / Decimal(10** (token_instance.contract.functions.decimals().call()))
+                    confirmations = int(w3.eth.blockNumber) - int(transaction["block_number"])
                     related_transactions.append([address, amount, confirmations, category])
             if not related_transactions:
                 logger.warning(f"txid {txid} is not related to any known address for {g.symbol}")
@@ -130,14 +143,9 @@ def get_transaction(txid):
 
 @api.post('/dump')
 def dump():
-    coin_inst = Coin(config["COIN_SYMBOL"])
-    fee_address = coin_inst.get_fee_deposit_account()
-    r = requests.get('http://'+config["BNB_HOST"]+':8081',  headers={'X-Shkeeper-Backend-Key': config["SHKEEPER_KEY"]})
-    key_list = r.text.split("href=\"")
-    for key in key_list:
-        if (key.find(fee_address.lower()[2:])) != -1:
-            fee_key=requests.get('http://'+config["BNB_HOST"]+':8081/'+str(key.split("\"")[0]),  headers={'X-Shkeeper-Backend-Key': config["SHKEEPER_KEY"]})
-    return fee_key.text
+    w = Coin(config["COIN_SYMBOL"])
+    all_wallets = w.get_dump()
+    return all_wallets
 
 @api.post('/fee-deposit-account')
 def get_fee_deposit_account():
@@ -153,7 +161,7 @@ def get_fee_deposit_account():
 
 @api.post('/get_all_addresses')
 def get_all_addresses():
-    all_addresses_list = w3.geth.personal.list_accounts()    
+    all_addresses_list = get_all_accounts()   
     return all_addresses_list
 
 

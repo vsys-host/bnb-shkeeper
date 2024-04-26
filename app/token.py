@@ -6,9 +6,28 @@ import time
 
 
 from .logging import logger
+from .encryption import Encryption
 from .config import config, get_contract_abi, get_contract_address, get_min_token_transfer_threshold
-from .models import Accounts, Settings, db
+from .models import Accounts, Settings, db, Wallets
 from .unlock_acc import get_account_password
+
+def get_all_accounts():
+    account_list = []
+    tries = 3
+    for i in range(tries):
+        try:
+            all_account_list = Accounts.query.all()
+        except:
+            if i < tries - 1: # i is zero indexed
+                db.session.rollback()
+                continue
+            else:
+                db.session.rollback()
+                raise Exception(f"There was exception during query to the database, try again later")
+        break
+    for account in all_account_list:
+        account_list.append(account.address)
+    return account_list
 
 class Coin:
     w3 = Web3(HTTPProvider(config["FULLNODE_URL"], request_kwargs={'timeout': int(config['FULLNODE_TIMEOUT'])}))
@@ -40,17 +59,30 @@ class Coin:
 
     def set_fee_deposit_account(self):
         coin_instance = Coin(config["COIN_SYMBOL"])
-        new_address = coin_instance.provider.geth.personal.new_account(get_account_password())
+        acc = coin_instance.provider.eth.account.create()
         crypto_str = config["COIN_SYMBOL"]
-        with app.app_context():
-            db.session.add(Accounts(address = new_address, 
-                                        crypto = crypto_str,
-                                        amount = 0,
-                                        type = "fee_deposit"
+        e = Encryption
+        logger.warning(f'Saving wallet {acc.address} to DB')
+        try:
+            with app.app_context():
+                db.session.add(Wallets(pub_address = acc.address, 
+                                        priv_key = e.encrypt(acc.key.hex()),
+                                        type = "fee_deposit",
                                         ))
-            db.session.commit()
-            db.session.close()
-            db.engine.dispose() 
+                db.session.add(Accounts(address = acc.address, 
+                                             crypto = crypto_str,
+                                             amount = 0,
+                                             type = "fee_deposit",
+                                             ))
+                db.session.commit()
+                db.session.close()
+                db.engine.dispose() 
+        finally:
+            with app.app_context():
+                db.session.remove()
+                db.engine.dispose() 
+    
+        logger.info(f'Created fee-deposit account and added to DB')
 
     def get_fee_deposit_account(self):
         try:
@@ -59,7 +91,10 @@ class Coin:
             db.session.rollback()
             raise Exception(f"There was exception during query to the database, try again later")
         if not pd:
-            self.set_fee_deposit_account()
+            #self.set_fee_deposit_account()
+            from .tasks import create_fee_deposit_account
+            create_fee_deposit_account.delay()
+            time.sleep(10)
         pd = Accounts.query.filter_by(type = "fee_deposit").first()
         return pd.address
     
@@ -90,14 +125,15 @@ class Coin:
     
         for payout in payout_list:
             if not self.provider.isAddress(payout['dest']):
-                raise Exception(f"Address {payout['dest']} is not valid ethereum address") 
+                raise Exception(f"Address {payout['dest']} is not valid blockchain address") 
 
         for payout in payout_list:
             if not self.provider.isChecksumAddress(payout['dest']):
                 logger.warning(f"Provided address {payout['dest']} is not checksum address, converting to checksum address")
                 payout['dest'] = self.provider.toChecksumAddress(payout['dest'])
                 logger.warning(f"Changed to {payout['dest']} which is checksum address")
-         
+
+
         multiplier = Decimal(config['MULTIPLIER']) # make max fee per gas as *MULTIPLIER of base price + fee
         max_payout_amount = Decimal(0)
         for payout in payout_list:
@@ -110,7 +146,7 @@ class Coin:
         gas_count = self.provider.eth.estimate_gas(transaction)
         gas_count = int(gas_count * payout_multiplier)
         gas_price = self.provider.eth.gasPrice
-        max_fee_per_gas = ( Decimal(self.provider.fromWei(gas_price, "ether")) + Decimal(fee) ) * multiplier
+        max_fee_per_gas = (Decimal(self.provider.fromWei(gas_price, "ether")) + Decimal(fee))
         # Check if enouth funds for multipayout on account
         should_pay  = Decimal(0)
         for payout in payout_list:
@@ -127,23 +163,31 @@ class Coin:
 
                 gas_count = self.provider.eth.estimate_gas(test_transaction)
                 gas_count = int(gas_count * payout_multiplier)       
-                trans =  self.provider.geth.personal.send_transaction({"from":  self.provider.toChecksumAddress(self.get_fee_deposit_account()), 
-                                                                    "to":  self.provider.toChecksumAddress(payout['dest']),
-                                                                    "value":  self.provider.toHex(self.provider.toWei(payout['amount'], "ether")),
-                                                                    "gas":  self.provider.toHex(gas_count),
-                                                                    "maxFeePerGas":   self.provider.toHex(self.provider.toWei(max_fee_per_gas, 'ether')),
-                                                                      }, get_account_password())
+
+                tx = {
+                    'from': self.provider.toChecksumAddress(self.get_fee_deposit_account()), 
+                    'to': self.provider.toChecksumAddress(payout['dest']),
+                    'value': self.provider.toHex(self.provider.toWei(payout['amount'], "ether")),
+                    'nonce': self.provider.eth.get_transaction_count(self.get_fee_deposit_account()),
+                    'gas':  self.provider.toHex(gas_count),
+                    'maxFeePerGas': self.provider.toHex(self.provider.toWei(max_fee_per_gas, 'ether')),
+                    'maxPriorityFeePerGas': self.provider.toHex( self.provider.toWei(fee, "ether")),
+                    'chainId': self.provider.eth.chain_id
+                }
+                signed_tx = self.provider.eth.account.sign_transaction(tx, self.get_seed_from_address(self.get_fee_deposit_account()))
+                txid = self.provider.eth.send_raw_transaction(signed_tx.rawTransaction)
         
             
                 payout_results.append({
                     "dest": payout['dest'],
                     "amount": float(payout['amount']),
                     "status": "success",
-                    "txids": [trans.hex()],
+                    "txids": [txid.hex()],
                 })
 
         
             return payout_results
+
    
     def drain_account(self, account, destination):
         drain_results = []
@@ -151,10 +195,10 @@ class Coin:
         account_balance = Decimal(0)
     
         if not self.provider.isAddress(destination):
-            raise Exception(f"Address {destination} is not valid ethereum address") 
+            raise Exception(f"Address {destination} is not valid blockchain address") 
     
         if not self.provider.isAddress(account):
-            raise Exception(f"Address {account} is not valid ethereum address")  
+            raise Exception(f"Address {account} is not valid blockchain address")  
 
         if not self.provider.isChecksumAddress(destination):
                 logger.warning(f"Provided address {destination} is not checksum address, converting to checksum address")
@@ -170,9 +214,11 @@ class Coin:
                                 "to":  self.provider.toChecksumAddress(destination), 
                                 "value":  self.provider.toWei(0, "ether")}  # transaction example for counting gas
         gas_count =  self.provider.eth.estimate_gas(transaction)
-        max_fee_per_gas = (  self.provider.fromWei( self.provider.eth.gas_price, "ether" ) + Decimal(fee) ) * multiplier
+        gas_count = int(gas_count * multiplier)    # make bigger for sure 
+        gas_price = self.provider.eth.gas_price
+        max_fee_per_gas = (self.provider.fromWei(gas_price, "ether") + Decimal(fee))
         try:
-            account_balance =  self.provider.fromWei( self.provider.eth.get_balance(account), "ether")
+            account_balance =  self.provider.fromWei(self.provider.eth.get_balance(account), "ether")
         except Exception as e:
             raise Exception(f"Get error: {e}, when trying get balance")
 
@@ -181,29 +227,79 @@ class Coin:
             #raise Exception(f"Cannot send funds, not enough for paying fee")  
             return False
 
-        can_send = account_balance - ( gas_count * max_fee_per_gas )
-
+        can_send = account_balance - (gas_count * max_fee_per_gas)
         if can_send <= 0:
             logger.warning(f"Cannot send funds, {can_send} not enough for paying fee")             
             #raise Exception(f"Cannot send funds, not enough for paying fee")  
             return False
         else:
-            trans =  self.provider.geth.personal.send_transaction({"from":  self.provider.toChecksumAddress(account), 
-                                                                    "to":  self.provider.toChecksumAddress(destination),
-                                                                    "value":  self.provider.toHex(self.provider.toWei(can_send, "ether")),
-                                                                    "gas":  self.provider.toHex(gas_count),
-                                                                    "maxFeePerGas":   self.provider.toHex(self.provider.toWei(max_fee_per_gas, 'ether')),
-                                                                }, get_account_password())
+            tx = {
+                    'from': self.provider.toChecksumAddress(account), 
+                    'to': self.provider.toChecksumAddress(destination),
+                    'value': self.provider.toHex(self.provider.toWei(can_send, "ether")),
+                    'nonce': self.provider.eth.get_transaction_count(account),
+                    'gas':  self.provider.toHex(gas_count),
+                    'maxFeePerGas': self.provider.toHex(self.provider.toWei(max_fee_per_gas, 'ether')),
+                    'maxPriorityFeePerGas': self.provider.toHex( self.provider.toWei(fee, "ether")),
+                    'chainId': self.provider.eth.chain_id
+                }
+            signed_tx = self.provider.eth.account.sign_transaction(tx, self.get_seed_from_address(account))
+            txid = self.provider.eth.send_raw_transaction(signed_tx.rawTransaction)
         
             
             drain_results.append({
                     "dest": destination,
                     "amount": float(can_send),
                     "status": "success",
-                    "txids": [trans.hex()],
+                    "txids": [txid.hex()],
                 })
         
             return drain_results
+
+    def get_seed_from_address(self, address):
+        tries = 3
+        for i in range(tries):
+            try:
+                pd = Wallets.query.filter_by(pub_address = address).first()
+            except:
+                if i < tries - 1: # i is zero indexed
+                    db.session.rollback()
+                    continue
+                else:
+                    db.session.rollback()
+                    raise Exception(f"There was exception during query to the database, try again later")
+            break
+        return Encryption.decrypt(pd.priv_key)
+
+
+    def get_dump(self):
+        logger.warning('Start dumping wallets')
+        all_wallets = {}
+        address_list = get_all_accounts()
+        for address in address_list:
+            all_wallets.update({address: {'public_address': address,
+                                          'secret': self.get_seed_from_address(address)}})
+        return all_wallets
+
+    def save_wallet_to_db(self, wallet):
+
+        encryption_inst = Encryption
+        logger.warning(f'Saving wallet {wallet.address} to DB')
+        try:
+            with app.app_context():
+                db.session.add(Wallets(pub_address = wallet.address, 
+                                       priv_key = encryption_inst.encrypt(wallet.key.hex()),
+                                       type = "regular",
+                                        ))
+                db.session.commit()
+                db.session.close()
+                db.engine.dispose() 
+        finally:
+            with app.app_context():
+                db.session.remove()
+                db.engine.dispose() 
+
+        logger.info(f'Wallet {wallet.address} has been added to DB')
 
 
 class Token:
@@ -219,11 +315,34 @@ class Token:
         self.provider.middleware_onion.inject(geth_poa_middleware, layer=0)
         self.contract = self.provider.eth.contract(address=self.contract_address, abi=self.abi)
 
+    def get_seed_from_address(self, address):
+        tries = 3
+        for i in range(tries):
+            try:
+                pd = Wallets.query.filter_by(pub_address = address).first()
+            except:
+                if i < tries - 1: # i is zero indexed
+                    db.session.rollback()
+                    continue
+                else:
+                    db.session.rollback()
+                    raise Exception(f"There was exception during query to the database, try again later")
+            break
+        return Encryption.decrypt(pd.priv_key)
+
     def get_all_transfers(self, from_block, to_block):
-        filter = self.contract.events.Transfer.createFilter(fromBlock=self.provider.toHex(from_block), 
-                                                                toBlock=self.provider.toHex(to_block))
-        transactions = filter.get_all_entries()
-        return transactions
+        all_transfers = []
+        transactions = self.provider.eth.get_logs({"fromBlock":from_block, 
+                                                   "toBlock":to_block, 
+                                                   "address":self.contract_address,
+                                                   "topics": ["0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef", None, None]})  
+        for trans in transactions:
+            all_transfers.append({"txid":trans.transactionHash.hex(),
+                                  "amount": Web3.toInt(hexstr=trans.data), 
+                                  "from": '0x'+trans.topics[1].hex()[26:], 
+                                  "to": '0x'+trans.topics[2].hex()[26:],
+                                  "block_number": trans.blockNumber})
+        return all_transfers
 
     def get_eth_transaction_price(self):
         gas_price = self.get_gas_price()
@@ -260,7 +379,7 @@ class Token:
         block_number = self.provider.eth.get_transaction(txid)['blockNumber']
         all_transfers = self.get_all_transfers(block_number, block_number)
         for transaction in all_transfers:
-            if transaction['transactionHash'].hex() == txid:
+            if transaction['txid'] == txid:
                 transaction_arr.append(transaction)
         return transaction_arr
         
@@ -310,20 +429,6 @@ class Token:
     def check_eth_address(self, address):
         return self.provider.isAddress(address)
 
-    def set_fee_deposit_account(self):
-        coin_instance = Coin(config["COIN_SYMBOL"])
-        new_address = coin_instance.provider.geth.personal.new_account(get_account_password())
-        crypto_str = config["COIN_SYMBOL"]
-        with app.app_context():
-            db.session.add(Accounts(address = new_address, 
-                                        crypto = crypto_str,
-                                        amount = 0,
-                                        type = "fee_deposit"
-                                        ))
-            db.session.commit()
-            db.session.close()
-            db.engine.dispose() 
-
     def get_fee_deposit_account(self):
         try:
             pd = Accounts.query.filter_by(type = "fee_deposit").first()
@@ -331,7 +436,10 @@ class Token:
             db.session.rollback()
             raise Exception(f"There was exception during query to the database, try again later")
         if not pd:
-            self.set_fee_deposit_account()
+            #self.set_fee_deposit_account()
+            from .tasks import create_fee_deposit_account
+            create_fee_deposit_account.delay()
+            time.sleep(10)
         pd = Accounts.query.filter_by(type = "fee_deposit").first()
         return pd.address
         
@@ -357,7 +465,7 @@ class Token:
         need_tokens = 0 
         for payout in payout_list:
             if not self.provider.isAddress(payout['dest']):
-                raise Exception(f"Address {payout['dest']} is not valid ethereum address") 
+                raise Exception(f"Address {payout['dest']} is not valid blockchain address") 
             need_tokens = need_tokens + payout['amount']
 
         for payout in payout_list:
@@ -389,13 +497,17 @@ class Token:
                 gas_price = self.get_gas_price()
                 max_fee_per_gas = ( Decimal(self.provider.fromWei(gas_price, "ether")) + Decimal(fee) ) #* Decimal(config['MULTIPLIER'])
 
-                self.provider.geth.personal.unlock_account(self.provider.toChecksumAddress(payout_account.lower()), get_account_password(), int(config['UNLOCK_ACCOUNT_TIME']))      
-                txid = self.contract.functions.transfer(self.provider.toChecksumAddress(payout['dest']),
-                   int((Decimal(payout['amount']) * 10** (self.contract.functions.decimals().call())))).transact({'from': self.provider.toChecksumAddress(payout_account.lower()), 
-                                                                                                          'gas': gas, 
-                                                                                                          'maxFeePerGas': self.provider.toWei(max_fee_per_gas, 'ether'), 
-                                                                                                          'maxPriorityFeePerGas': self.provider.toWei(max_fee_per_gas, 'ether')}) # without * Decimal(config['MULTIPLIER'])
-                self.provider.geth.personal.lock_account(self.provider.toChecksumAddress(payout_account.lower()))
+                contract_call = self.contract.functions.transfer(self.provider.toChecksumAddress(payout['dest']),
+                                                                 int((Decimal(payout['amount']) * 10** (self.contract.functions.decimals().call()))))
+                unsigned_txn = contract_call.buildTransaction({'from': self.provider.toChecksumAddress(payout_account), 
+                                                               'gas':  gas,
+                                                               'maxFeePerGas': self.provider.toWei(max_fee_per_gas, 'ether'),
+                                                               'maxPriorityFeePerGas': self.provider.toWei(Decimal(fee), 'ether'),
+                                                               'nonce': self.provider.eth.get_transaction_count(payout_account),
+                                                               'chainId': self.provider.eth.chain_id})   
+                signed_txn = self.provider.eth.account.sign_transaction(unsigned_txn, private_key= self.get_seed_from_address(payout_account)) 
+                txid = self.provider.eth.sendRawTransaction(signed_txn.rawTransaction) 
+
                 payout_results.append({
                 "dest": payout['dest'],
                 "amount": float(payout['amount']),
@@ -410,9 +522,9 @@ class Token:
         results = []
         
         if not self.check_eth_address(destination):
-            raise Exception(f"Address {destination} is not valid ethereum address")     
+            raise Exception(f"Address {destination} is not valid blockchain address")     
         if not self.check_eth_address(account):
-            raise Exception(f"Address {account} is not valid ethereum address")  
+            raise Exception(f"Address {account} is not valid blockchain address")  
         if not self.provider.isChecksumAddress(destination):
                 logger.warning(f"Provided address {destination} is not checksum address, converting to checksum address")
                 destination = self.provider.toChecksumAddress(destination)
@@ -446,22 +558,34 @@ class Token:
                                "value": self.provider.toWei(0, "ether")}  # transaction example for counting gas
                 gas_coin_count = int(self.provider.eth.estimate_gas(transaction) *  Decimal(config['MULTIPLIER'])) #make it bigger for sure
                 max_fee_per_gas_coin = ( Decimal(self.provider.fromWei(gas_price, "ether")) + Decimal(fee) ) * Decimal(config['MULTIPLIER'])
-                txid = self.provider.geth.personal.send_transaction({"from": self.provider.toChecksumAddress(self.get_fee_deposit_account()), 
-                                                                        "to": self.provider.toChecksumAddress(account),
-                                                                        "value": self.provider.toHex(self.provider.toWei(need_to_send, "ether")),
-                                                                        "gas": self.provider.toHex(gas_coin_count),
-                                                                        "maxFeePerGas":  self.provider.toHex(self.provider.toWei(max_fee_per_gas_coin, 'ether')),
-                                                                        }, get_account_password())
+
+                tx = {
+                    'from': self.provider.toChecksumAddress(self.get_fee_deposit_account()), 
+                    'to': self.provider.toChecksumAddress(account),
+                    'value': self.provider.toHex(self.provider.toWei(need_to_send, "ether")),
+                    'nonce': self.provider.eth.get_transaction_count(self.get_fee_deposit_account()),
+                    'gas':  self.provider.toHex(gas_coin_count),
+                    'maxFeePerGas': self.provider.toHex(self.provider.toWei(max_fee_per_gas_coin, 'ether')),
+                    'maxPriorityFeePerGas': self.provider.toHex(self.provider.toWei(fee, "ether")),
+                    'chainId': self.provider.eth.chain_id
+                }
+                signed_tx = self.provider.eth.account.sign_transaction(tx, self.get_seed_from_address(self.get_fee_deposit_account()))
+                txid = self.provider.eth.send_raw_transaction(signed_tx.rawTransaction)
+    
+               
                 logger.warning(f'send coins to token account: {str(txid.hex())}')
                 time.sleep(int(config['SLEEP_AFTER_SEEDING']))
-            # Send tokens to the fee account            
-            self.provider.geth.personal.unlock_account(self.provider.toChecksumAddress(account.lower()), get_account_password(), int(config['UNLOCK_ACCOUNT_TIME']))    
-            txid = self.contract.functions.transfer(self.provider.toChecksumAddress(destination),
-                   int((Decimal(can_send) * 10** (self.contract.functions.decimals().call())))).transact({'from': self.provider.toChecksumAddress(account.lower()), 
-                                                                                                          'gas': gas, 
-                                                                                                          'maxFeePerGas': self.provider.toWei(max_fee_per_gas, 'ether'), 
-                                                                                                          'maxPriorityFeePerGas': self.provider.toWei(max_fee_per_gas, 'ether')})  #self.provider.toWei(Decimal(config['MAX_PRIORITY_FEE']), 'ether')}) # without * Decimal(config['MULTIPLIER'])
-            self.provider.geth.personal.lock_account(self.provider.toChecksumAddress(account.lower()))
+
+            contract_call = self.contract.functions.transfer(self.provider.toChecksumAddress(destination),
+                                                             int((Decimal(can_send) * 10** (self.contract.functions.decimals().call()))))
+            unsigned_txn = contract_call.buildTransaction({'from': self.provider.toChecksumAddress(account.lower()), 
+                                                           'gas':  gas,
+                                                           'maxFeePerGas': self.provider.toWei(max_fee_per_gas, 'ether'),
+                                                           'maxPriorityFeePerGas':   self.provider.toWei(Decimal(config['MAX_PRIORITY_FEE']), 'ether'), # without * Decimal(config['MULTIPLIER'])
+                                                           'nonce': self.provider.eth.get_transaction_count(account),
+                                                           'chainId': self.provider.eth.chain_id})   
+            signed_txn = self.provider.eth.account.sign_transaction(unsigned_txn, private_key= self.get_seed_from_address(account)) 
+            txid = self.provider.eth.sendRawTransaction(signed_txn.rawTransaction)                                            
     
             results.append({
                 "dest": destination,

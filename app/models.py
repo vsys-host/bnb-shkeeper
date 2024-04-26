@@ -19,3 +19,14 @@ class Accounts(db.Model):
     status = db.Column(db.String(10))
     type = db.Column(db.String(30))
     __table_args__ = (db.UniqueConstraint('id'), )
+
+
+class Wallets(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    pub_address = db.Column(db.String(70))
+    priv_key = db.Column(db.String(300))
+    create_time = db.Column(db.DateTime, default=db.func.current_timestamp(),
+                                        onupdate=db.func.current_timestamp())
+    status = db.Column(db.String(10))
+    type = db.Column(db.String(30))
+    __table_args__ = (db.UniqueConstraint('id'), )

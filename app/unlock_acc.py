@@ -4,7 +4,6 @@ import json
 from .logging import logger
 from .config import config
 
-#global acc_password 
 acc_password = False
 
     

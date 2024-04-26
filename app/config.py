@@ -51,6 +51,7 @@ config = {
     'UNLOCK_ACCOUNT_TIME': os.environ.get('UNLOCK_ACCOUNT_TIME', '60'),
     'MIN_TRANSFER_THRESHOLD': Decimal(os.environ.get('MIN_TRANSFER_THRESHOLD', '0.0005')),
     'MIN_TOKEN_TRANSFER_THRESHOLD': Decimal(os.environ.get('MIN_TOKEN_TRANSFER_THRESHOLD', '0.5')), 
+    'FORCE_ADD_WALLETS_TO_DB': os.environ.get('FORCE_ADD_WALLETS_TO_DB', 'False'), # make 'True' to force moving wallets from geth storage to DB
     
 }
 
