@@ -51,4 +51,4 @@ Werkzeug==2.2.2
 wrapt==1.14.1
 zipp==3.8.1
 web3==5.31.3
-
+cryptography==41.0.5
