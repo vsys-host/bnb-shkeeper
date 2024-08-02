@@ -44,15 +44,15 @@ def get_all_metrics():
         response['bnb_wallet_last_block'] = last_checked_block_number
         block =  w3.eth.get_block(w3.toHex(last_checked_block_number))
         response['bnb_wallet_last_block_timestamp'] = block['timestamp']
-        response['ethereum_fullnode_status'] = 1
+        response['bnb_fullnode_status'] = 1
         return response
     else:
-        response['ethereum_fullnode_status'] = 0
+        response['bnb_fullnode_status'] = 0
         return response
 
 geth_last_release = Info(
     'geth_last_release',
-    'Version of the latest release from https://github.com/ethereum/go-ethereum/releases'
+    'Version of the latest release from https://github.com/bnb-chain/bsc/releases'
 )
 
 
@@ -71,7 +71,7 @@ bnb_wallet_last_block_timestamp = Gauge('bnb_wallet_last_block_timestamp', 'Last
 @metrics_blueprint.get("/metrics")
 def get_metrics():
     response = get_all_metrics()
-    if response['ethereum_fullnode_status'] == 1:
+    if response['bnb_fullnode_status'] == 1:
         geth_fullnode_version.info({'version': response['geth_version']})
         bnb_fullnode_last_block.set(response['last_fullnode_block_number'])
         bnb_fullnode_last_block_timestamp.set(response['last_fullnode_block_timestamp'])
