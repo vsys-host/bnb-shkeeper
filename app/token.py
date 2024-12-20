@@ -156,6 +156,7 @@ class Coin:
         if have_crypto < should_pay:
             raise Exception(f"Have not enough crypto on fee account, need {should_pay} have {have_crypto}")
         else:
+            nonce = self.provider.eth.get_transaction_count(self.get_fee_deposit_account())
             for payout in payout_list:
                 test_transaction = {"from": self.provider.toChecksumAddress(self.get_fee_deposit_account()),
                                     "to": self.provider.toChecksumAddress(payout['dest']),
@@ -168,7 +169,7 @@ class Coin:
                     'from': self.provider.toChecksumAddress(self.get_fee_deposit_account()), 
                     'to': self.provider.toChecksumAddress(payout['dest']),
                     'value': self.provider.toHex(self.provider.toWei(payout['amount'], "ether")),
-                    'nonce': self.provider.eth.get_transaction_count(self.get_fee_deposit_account()),
+                    'nonce': nonce,
                     'gas':  self.provider.toHex(gas_count),
                     'maxFeePerGas': self.provider.toHex(self.provider.toWei(max_fee_per_gas, 'ether')),
                     'maxPriorityFeePerGas': self.provider.toHex( self.provider.toWei(fee, "ether")),
@@ -184,6 +185,8 @@ class Coin:
                     "status": "success",
                     "txids": [txid.hex()],
                 })
+
+                nonce = nonce + 1
 
         
             return payout_results
@@ -490,6 +493,7 @@ class Token:
         if need_crypto_for_multipayout > have_crypto:
             raise Exception(f"Have not enough crypto on fee account, need {need_crypto_for_multipayout} have {have_crypto}")
         else:
+            nonce = self.provider.eth.get_transaction_count(payout_account)
             for payout in payout_list:
 
                 gas  = self.contract.functions.transfer(payout['dest'], int((Decimal(payout['amount']) * 10** (self.contract.functions.decimals().call())))).estimateGas({'from': payout_account})
@@ -503,7 +507,7 @@ class Token:
                                                                'gas':  gas,
                                                                'maxFeePerGas': self.provider.toWei(max_fee_per_gas, 'ether'),
                                                                'maxPriorityFeePerGas': self.provider.toWei(Decimal(fee), 'ether'),
-                                                               'nonce': self.provider.eth.get_transaction_count(payout_account),
+                                                               'nonce': nonce,
                                                                'chainId': self.provider.eth.chain_id})   
                 signed_txn = self.provider.eth.account.sign_transaction(unsigned_txn, private_key= self.get_seed_from_address(payout_account)) 
                 txid = self.provider.eth.sendRawTransaction(signed_txn.rawTransaction) 
@@ -514,6 +518,8 @@ class Token:
                 "status": "success",
                 "txids": [txid.hex()],
             })
+                
+                nonce = nonce + 1
                 
         return payout_results
      
