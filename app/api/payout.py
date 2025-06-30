@@ -3,7 +3,7 @@ from decimal import Decimal
 from flask import g, request
 from flask import current_app as app
 from web3 import Web3, HTTPProvider
-from web3.middleware import geth_poa_middleware 
+from web3.middleware import ExtraDataToPOAMiddleware 
 
 from .. import celery
 from ..tasks import make_multipayout 
@@ -36,7 +36,7 @@ def calc_tx_fee(amount):
 @api.post('/multipayout')
 def multipayout():
     w3 = Web3(HTTPProvider(config["FULLNODE_URL"], request_kwargs={'timeout': int(config['FULLNODE_TIMEOUT'])}))
-    w3.middleware_onion.inject(geth_poa_middleware, layer=0)
+    w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
     
     try:
         payout_list = request.get_json(force=True)
@@ -48,7 +48,7 @@ def multipayout():
 
     for transfer in payout_list:
         try:
-            is_address = w3.isAddress(transfer['dest'])
+            is_address = w3.is_address(transfer['dest'])
         except Exception as e:
             raise Exception(f"Bad destination address in {transfer}: {e}")
         if not is_address:

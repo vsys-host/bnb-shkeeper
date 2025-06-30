@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from flask import current_app, g
 from web3 import Web3, HTTPProvider
-from web3.middleware import geth_poa_middleware 
+from web3.middleware import ExtraDataToPOAMiddleware 
 import decimal
 import requests
 
@@ -18,7 +18,7 @@ from app import create_app
 from ..unlock_acc import get_account_password
 
 w3 = Web3(HTTPProvider(config["FULLNODE_URL"], request_kwargs={'timeout': int(config['FULLNODE_TIMEOUT'])}))
-w3.middleware_onion.inject(geth_poa_middleware, layer=0)
+w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
 
 
 app = create_app()
@@ -71,7 +71,7 @@ def get_status():
         pd = Settings.query.filter_by(name = 'last_block').first()
     
     last_checked_block_number = int(pd.value)
-    block =  w3.eth.get_block(w3.toHex(last_checked_block_number))
+    block =  w3.eth.get_block(w3.to_hex(last_checked_block_number))
     return {'status': 'success', 'last_block_timestamp': block['timestamp']}
 
 @api.post('/transaction/<txid>')
@@ -92,43 +92,39 @@ def get_transaction(txid):
                 category = 'send'
             else:
                 return {'status': 'error', 'msg': 'txid is not related to any known address'}
-            amount = w3.fromWei(transaction["value"], "ether") 
-            confirmations = int(w3.eth.blockNumber) - int(transaction["blockNumber"])
+            amount = w3.from_wei(transaction["value"], "ether") 
+            confirmations = int(w3.eth.block_number) - int(transaction["blockNumber"])
             related_transactions.append([address, amount, confirmations, category])
         except Exception as e:
             return {f'status': 'error', 'msg': {e}}
     elif g.symbol in config['TOKENS'][config["CURRENT_BNB_NETWORK"]].keys():
         token_instance  = Token(g.symbol)
         try:
-            transfer_abi_args = token_instance.contract._find_matching_event_abi('Transfer')['inputs']
-            for argument in transfer_abi_args:
-                if argument['type'] == 'uint256':
-                    amount_name = argument['name']
             transactions_array = token_instance.get_token_transaction(txid)
             if len(transactions_array) == 0:
                 logger.warning(f"There is not any token {g.symbol} transaction with transactionID {txid}")
                 return {'status': 'error', 'msg': 'txid is not found for this crypto '}
             logger.warning(transactions_array)
             for transaction in transactions_array:
-                if ((token_instance.provider.toChecksumAddress(transaction['to']) in list_accounts) and 
-                    (token_instance.provider.toChecksumAddress(transaction['from']) in list_accounts)):
-                    address = token_instance.provider.toChecksumAddress(transaction["from"])
+                if ((token_instance.provider.to_checksum_address(transaction['to']) in list_accounts) and 
+                    (token_instance.provider.to_checksum_address(transaction['from']) in list_accounts)):
+                    address = token_instance.provider.to_checksum_address(transaction["from"])
                     category = 'internal'
                     amount = Decimal(transaction["amount"]) / Decimal(10** (token_instance.contract.functions.decimals().call()))
-                    confirmations = int(w3.eth.blockNumber) - int(transaction["block_number"])
+                    confirmations = int(w3.eth.block_number) - int(transaction["block_number"])
                     related_transactions.append([address, amount, confirmations, category])
 
-                elif token_instance.provider.toChecksumAddress(transaction['to']) in list_accounts:
-                    address = token_instance.provider.toChecksumAddress(transaction["to"])
+                elif token_instance.provider.to_checksum_address(transaction['to']) in list_accounts:
+                    address = token_instance.provider.to_checksum_address(transaction["to"])
                     category = 'receive'
                     amount = Decimal(transaction["amount"]) / Decimal(10** (token_instance.contract.functions.decimals().call()))
-                    confirmations = int(w3.eth.blockNumber) - int(transaction["block_number"])
+                    confirmations = int(w3.eth.block_number) - int(transaction["block_number"])
                     related_transactions.append([address, amount, confirmations, category])
-                elif token_instance.provider.toChecksumAddress(transaction['from']) in list_accounts:                
-                    address = token_instance.provider.toChecksumAddress(transaction["from"])
+                elif token_instance.provider.to_checksum_address(transaction['from']) in list_accounts:                
+                    address = token_instance.provider.to_checksum_address(transaction["from"])
                     category = 'send'
                     amount = Decimal(transaction["amount"]) / Decimal(10** (token_instance.contract.functions.decimals().call()))
-                    confirmations = int(w3.eth.blockNumber) - int(transaction["block_number"])
+                    confirmations = int(w3.eth.block_number) - int(transaction["block_number"])
                     related_transactions.append([address, amount, confirmations, category])
             if not related_transactions:
                 logger.warning(f"txid {txid} is not related to any known address for {g.symbol}")
