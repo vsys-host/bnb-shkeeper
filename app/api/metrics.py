@@ -2,7 +2,7 @@ import requests
 import prometheus_client
 from prometheus_client import generate_latest, Info, Gauge
 from web3 import Web3, HTTPProvider
-from web3.middleware import geth_poa_middleware 
+from web3.middleware import ExtraDataToPOAMiddleware 
 
 from . import metrics_blueprint
 from ..config import config
@@ -27,22 +27,22 @@ def get_latest_release(name):
 
 def get_all_metrics():
     w3 = Web3(HTTPProvider(config["FULLNODE_URL"], request_kwargs={'timeout': int(config['FULLNODE_TIMEOUT'])}))
-    w3.middleware_onion.inject(geth_poa_middleware, layer=0)
+    w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
 
-    if w3.isConnected:
+    if w3.is_connected:
         response = {}
         last_fullnode_block_number = w3.eth.block_number
         response['last_fullnode_block_number'] = last_fullnode_block_number
         response['last_fullnode_block_timestamp'] = w3.eth.get_block(w3.toHex(last_fullnode_block_number))['timestamp']
     
-        geth_version = w3.clientVersion
+        geth_version = w3.client_version
         geth_version = geth_version.split('v')[1].split('-')[0]
         response['geth_version'] = geth_version
     
         pd = Settings.query.filter_by(name = 'last_block').first()
         last_checked_block_number = int(pd.value)
         response['bnb_wallet_last_block'] = last_checked_block_number
-        block =  w3.eth.get_block(w3.toHex(last_checked_block_number))
+        block =  w3.eth.get_block(w3.to_hex(last_checked_block_number))
         response['bnb_wallet_last_block_timestamp'] = block['timestamp']
         response['bnb_fullnode_status'] = 1
         return response

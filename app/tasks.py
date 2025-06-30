@@ -5,7 +5,7 @@ import copy
 import requests
 import eth_account
 from web3 import Web3, HTTPProvider
-from web3.middleware import geth_poa_middleware 
+from web3.middleware import ExtraDataToPOAMiddleware 
 from decimal import Decimal
 
 from celery.schedules import crontab
@@ -23,7 +23,7 @@ from .utils import skip_if_running
 logger = get_task_logger(__name__)
 
 w3 = Web3(HTTPProvider(config["FULLNODE_URL"], request_kwargs={'timeout': int(config['FULLNODE_TIMEOUT'])}))
-w3.middleware_onion.inject(geth_poa_middleware, layer=0)
+w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
 
 
 @celery.task()
@@ -88,10 +88,10 @@ def refresh_balances():
                 db.session.rollback()
                 raise Exception(f"There was exception during query to the database, try again later")
 
-            acc_balance = decimal.Decimal(w3.fromWei(w3.eth.get_balance(account), "ether"))
+            acc_balance = decimal.Decimal(w3.from_wei(w3.eth.get_balance(account), "ether"))
             if Accounts.query.filter_by(address = account, crypto = config["COIN_SYMBOL"]).first():
                 pd = Accounts.query.filter_by(address = account, crypto = config["COIN_SYMBOL"]).first()            
-                pd.amount = decimal.Decimal(w3.fromWei(w3.eth.get_balance(account), "ether"))                     
+                pd.amount = decimal.Decimal(w3.from_wei(w3.eth.get_balance(account), "ether"))                     
                 with app.app_context():
                     db.session.add(pd)
                     db.session.commit()
@@ -103,7 +103,7 @@ def refresh_balances():
                 token_instance = Token(token)
                 if Accounts.query.filter_by(address = account, crypto = token).first():
                     pd = Accounts.query.filter_by(address = account, crypto = token).first()
-                    balance = decimal.Decimal(token_instance.contract.functions.balanceOf(w3.toChecksumAddress(account)).call())
+                    balance = decimal.Decimal(token_instance.contract.functions.balanceOf(w3.to_checksum_address(account)).call())
                     normalized_balance = balance / decimal.Decimal(10** (token_instance.contract.functions.decimals().call()))
                     pd.amount = normalized_balance
                     

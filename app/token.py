@@ -1,5 +1,5 @@
 from web3 import HTTPProvider, Web3
-from web3.middleware import geth_poa_middleware 
+from web3.middleware import ExtraDataToPOAMiddleware 
 from decimal import Decimal
 from flask import current_app as app
 import time
@@ -31,29 +31,29 @@ def get_all_accounts():
 
 class Coin:
     w3 = Web3(HTTPProvider(config["FULLNODE_URL"], request_kwargs={'timeout': int(config['FULLNODE_TIMEOUT'])}))
-    w3.middleware_onion.inject(geth_poa_middleware, layer=0)
+    w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
 
     def __init__(self, symbol, init=True):
         self.symbol = symbol        
         self.fullnode = config["FULLNODE_URL"]
         self.provider = Web3(HTTPProvider(config["FULLNODE_URL"], request_kwargs={'timeout': int(config['FULLNODE_TIMEOUT'])}))
-        self.provider.middleware_onion.inject(geth_poa_middleware, layer=0)
+        self.provider.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
 
     def get_transaction_price(self):
-        gas_price = self.provider.eth.gasPrice
+        gas_price = self.provider.eth.gas_price
         fee = Decimal(config['MAX_PRIORITY_FEE'])
         multiplier = Decimal(config['MULTIPLIER']) # make max fee per gas as *MULTIPLIER of base price + fee
         # add to need_crypto gas which need for sending crypto to tokken acc
-        max_fee_per_gas = ( self.provider.fromWei(gas_price, "ether") + Decimal(fee) ) 
-        eth_transaction = {"from": self.provider.toChecksumAddress(self.get_fee_deposit_account()),
-                                "to": self.provider.toChecksumAddress(self.get_fee_deposit_account()), 
-                                "value": self.provider.toWei(0, "ether")}  # transaction example for counting gas
+        max_fee_per_gas = ( self.provider.from_wei(gas_price, "ether") + Decimal(fee) ) 
+        eth_transaction = {"from": self.provider.to_checksum_address(self.get_fee_deposit_account()),
+                                "to": self.provider.to_checksum_address(self.get_fee_deposit_account()), 
+                                "value": self.provider.to_wei(0, "ether")}  # transaction example for counting gas
 
         payout_multiplier = Decimal(config['PAYOUT_MULTIPLIER'])
         eth_gas_count = self.provider.eth.estimate_gas(eth_transaction)
         eth_gas_count =  int(eth_gas_count *  payout_multiplier)
-        gas_price = self.provider.eth.gasPrice
-        max_fee_per_gas = ( Decimal(self.provider.fromWei(gas_price, "ether")) + Decimal(fee) ) * multiplier
+        gas_price = self.provider.eth.gas_price
+        max_fee_per_gas = ( Decimal(self.provider.from_wei(gas_price, "ether")) + Decimal(fee) ) * multiplier
         price = eth_gas_count  * max_fee_per_gas
         return price
 
@@ -100,7 +100,7 @@ class Coin:
     
     def get_fee_deposit_coin_balance(self):
         deposit_account = self.get_fee_deposit_account()
-        amount = Decimal(self.provider.fromWei(self.provider.eth.get_balance(deposit_account), "ether"))
+        amount = Decimal(self.provider.from_wei(self.provider.eth.get_balance(deposit_account), "ether"))
         return amount
 
     def get_all_balances(self):
@@ -124,13 +124,13 @@ class Coin:
         fee = Decimal(fee)
     
         for payout in payout_list:
-            if not self.provider.isAddress(payout['dest']):
+            if not self.provider.is_address(payout['dest']):
                 raise Exception(f"Address {payout['dest']} is not valid blockchain address") 
 
         for payout in payout_list:
-            if not self.provider.isChecksumAddress(payout['dest']):
+            if not self.provider.is_checksum_address(payout['dest']):
                 logger.warning(f"Provided address {payout['dest']} is not checksum address, converting to checksum address")
-                payout['dest'] = self.provider.toChecksumAddress(payout['dest'])
+                payout['dest'] = self.provider.to_checksum_address(payout['dest'])
                 logger.warning(f"Changed to {payout['dest']} which is checksum address")
 
 
@@ -139,14 +139,14 @@ class Coin:
         for payout in payout_list:
             if payout['amount'] > max_payout_amount:
                 max_payout_amount = payout['amount']
-        transaction = {"from": self.provider.toChecksumAddress(self.get_fee_deposit_account()),
-                                "to": self.provider.toChecksumAddress(payout_list[0]['dest']), 
-                                "value": self.provider.toWei(max_payout_amount, "ether")}  # transaction example for counting gas
+        transaction = {"from": self.provider.to_checksum_address(self.get_fee_deposit_account()),
+                                "to": self.provider.to_checksum_address(payout_list[0]['dest']), 
+                                "value": self.provider.to_wei(max_payout_amount, "ether")}  # transaction example for counting gas
         payout_multiplier = Decimal(config['PAYOUT_MULTIPLIER'])
         gas_count = self.provider.eth.estimate_gas(transaction)
         gas_count = int(gas_count * payout_multiplier)
-        gas_price = self.provider.eth.gasPrice
-        max_fee_per_gas = (Decimal(self.provider.fromWei(gas_price, "ether")) + Decimal(fee))
+        gas_price = self.provider.eth.gas_price
+        max_fee_per_gas = (Decimal(self.provider.from_wei(gas_price, "ether")) + Decimal(fee))
         # Check if enouth funds for multipayout on account
         should_pay  = Decimal(0)
         for payout in payout_list:
@@ -158,25 +158,25 @@ class Coin:
         else:
             nonce = self.provider.eth.get_transaction_count(self.get_fee_deposit_account())
             for payout in payout_list:
-                test_transaction = {"from": self.provider.toChecksumAddress(self.get_fee_deposit_account()),
-                                    "to": self.provider.toChecksumAddress(payout['dest']),
-                                    "value":  self.provider.toWei(payout['amount'], "ether")}  # transaction example for counting gas
+                test_transaction = {"from": self.provider.to_checksum_address(self.get_fee_deposit_account()),
+                                    "to": self.provider.to_checksum_address(payout['dest']),
+                                    "value":  self.provider.to_wei(payout['amount'], "ether")}  # transaction example for counting gas
 
                 gas_count = self.provider.eth.estimate_gas(test_transaction)
                 gas_count = int(gas_count * payout_multiplier)       
 
                 tx = {
-                    'from': self.provider.toChecksumAddress(self.get_fee_deposit_account()), 
-                    'to': self.provider.toChecksumAddress(payout['dest']),
-                    'value': self.provider.toHex(self.provider.toWei(payout['amount'], "ether")),
+                    'from': self.provider.to_checksum_address(self.get_fee_deposit_account()), 
+                    'to': self.provider.to_checksum_address(payout['dest']),
+                    'value': self.provider.to_hex(self.provider.to_wei(payout['amount'], "ether")),
                     'nonce': nonce,
-                    'gas':  self.provider.toHex(gas_count),
-                    'maxFeePerGas': self.provider.toHex(self.provider.toWei(max_fee_per_gas, 'ether')),
-                    'maxPriorityFeePerGas': self.provider.toHex( self.provider.toWei(fee, "ether")),
+                    'gas':  self.provider.to_hex(gas_count),
+                    'maxFeePerGas': self.provider.to_hex(self.provider.to_wei(max_fee_per_gas, 'ether')),
+                    'maxPriorityFeePerGas': self.provider.to_hex( self.provider.to_wei(fee, "ether")),
                     'chainId': self.provider.eth.chain_id
                 }
                 signed_tx = self.provider.eth.account.sign_transaction(tx, self.get_seed_from_address(self.get_fee_deposit_account()))
-                txid = self.provider.eth.send_raw_transaction(signed_tx.rawTransaction)
+                txid = self.provider.eth.send_raw_transaction(signed_tx.raw_transaction)
         
             
                 payout_results.append({
@@ -197,15 +197,15 @@ class Coin:
         fee = Decimal(config['MAX_PRIORITY_FEE'])
         account_balance = Decimal(0)
     
-        if not self.provider.isAddress(destination):
+        if not self.provider.is_address(destination):
             raise Exception(f"Address {destination} is not valid blockchain address") 
     
-        if not self.provider.isAddress(account):
+        if not self.provider.is_address(account):
             raise Exception(f"Address {account} is not valid blockchain address")  
 
-        if not self.provider.isChecksumAddress(destination):
+        if not self.provider.is_checksum_address(destination):
                 logger.warning(f"Provided address {destination} is not checksum address, converting to checksum address")
-                destination = self.provider.toChecksumAddress(destination)
+                destination = self.provider.to_checksum_address(destination)
                 logger.warning(f"Changed to {destination} which is checksum address") 
         
         if account == destination:
@@ -213,15 +213,15 @@ class Coin:
             return False     
         
         multiplier = Decimal(config['MULTIPLIER']) # make max fee per gas as *MULTIPLIER of base price + fee
-        transaction = {"from":  self.provider.toChecksumAddress(account),
-                                "to":  self.provider.toChecksumAddress(destination), 
-                                "value":  self.provider.toWei(0, "ether")}  # transaction example for counting gas
+        transaction = {"from":  self.provider.to_checksum_address(account),
+                                "to":  self.provider.to_checksum_address(destination), 
+                                "value":  self.provider.to_wei(0, "ether")}  # transaction example for counting gas
         gas_count =  self.provider.eth.estimate_gas(transaction)
         gas_count = int(gas_count * multiplier)    # make bigger for sure 
         gas_price = self.provider.eth.gas_price
-        max_fee_per_gas = (self.provider.fromWei(gas_price, "ether") + Decimal(fee))
+        max_fee_per_gas = (self.provider.from_wei(gas_price, "ether") + Decimal(fee))
         try:
-            account_balance =  self.provider.fromWei(self.provider.eth.get_balance(account), "ether")
+            account_balance =  self.provider.from_wei(self.provider.eth.get_balance(account), "ether")
         except Exception as e:
             raise Exception(f"Get error: {e}, when trying get balance")
 
@@ -237,17 +237,17 @@ class Coin:
             return False
         else:
             tx = {
-                    'from': self.provider.toChecksumAddress(account), 
-                    'to': self.provider.toChecksumAddress(destination),
-                    'value': self.provider.toHex(self.provider.toWei(can_send, "ether")),
+                    'from': self.provider.to_checksum_address(account), 
+                    'to': self.provider.to_checksum_address(destination),
+                    'value': self.provider.to_hex(self.provider.to_wei(can_send, "ether")),
                     'nonce': self.provider.eth.get_transaction_count(account),
-                    'gas':  self.provider.toHex(gas_count),
-                    'maxFeePerGas': self.provider.toHex(self.provider.toWei(max_fee_per_gas, 'ether')),
-                    'maxPriorityFeePerGas': self.provider.toHex( self.provider.toWei(fee, "ether")),
+                    'gas':  self.provider.to_hex(gas_count),
+                    'maxFeePerGas': self.provider.to_hex(self.provider.to_wei(max_fee_per_gas, 'ether')),
+                    'maxPriorityFeePerGas': self.provider.to_hex(self.provider.to_wei(fee, "ether")),
                     'chainId': self.provider.eth.chain_id
                 }
             signed_tx = self.provider.eth.account.sign_transaction(tx, self.get_seed_from_address(account))
-            txid = self.provider.eth.send_raw_transaction(signed_tx.rawTransaction)
+            txid = self.provider.eth.send_raw_transaction(signed_tx.raw_transaction)
         
             
             drain_results.append({
@@ -307,7 +307,7 @@ class Coin:
 
 class Token:
     w3 = Web3(HTTPProvider(config["FULLNODE_URL"], request_kwargs={'timeout': int(config['FULLNODE_TIMEOUT'])}))
-    w3.middleware_onion.inject(geth_poa_middleware, layer=0)
+    w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
 
     def __init__(self, symbol, init=True):
         self.symbol = symbol        
@@ -315,7 +315,7 @@ class Token:
         self.abi = get_contract_abi(symbol)
         self.fullnode = config["FULLNODE_URL"]
         self.provider = Web3(HTTPProvider(config["FULLNODE_URL"], request_kwargs={'timeout': int(config['FULLNODE_TIMEOUT'])}))
-        self.provider.middleware_onion.inject(geth_poa_middleware, layer=0)
+        self.provider.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
         self.contract = self.provider.eth.contract(address=self.contract_address, abi=self.abi)
 
     def get_seed_from_address(self, address):
@@ -339,22 +339,23 @@ class Token:
                                                    "toBlock":to_block, 
                                                    "address":self.contract_address,
                                                    "topics": ["0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef", None, None]})  
+
         for trans in transactions:
-            all_transfers.append({"txid":trans.transactionHash.hex(),
-                                  "amount": Web3.toInt(hexstr=trans.data), 
-                                  "from": '0x'+trans.topics[1].hex()[26:], 
-                                  "to": '0x'+trans.topics[2].hex()[26:],
-                                  "block_number": trans.blockNumber})
+           all_transfers.append({"txid":trans.transactionHash.hex(),
+                                 "amount": Web3.to_int(trans.data), 
+                                 "from": str('0x' + trans.topics[1].hex()[24:]), 
+                                 "to": str('0x' + trans.topics[2].hex()[24:]),
+                                 "block_number": trans.blockNumber})
         return all_transfers
 
     def get_eth_transaction_price(self):
         gas_price = self.get_gas_price()
         fee = Decimal(config['MAX_PRIORITY_FEE'])
         # add to need_crypto gas which need for sending crypto to tokken acc
-        max_fee_per_gas = ( self.provider.fromWei(gas_price, "ether") + Decimal(fee) ) 
-        eth_transaction = {"from": self.provider.toChecksumAddress(self.get_fee_deposit_account()),
-                                "to": self.provider.toChecksumAddress(self.get_fee_deposit_account()), 
-                                "value": self.provider.toWei(0, "ether")}  # transaction example for counting gas
+        max_fee_per_gas = ( self.provider.from_wei(gas_price, "ether") + Decimal(fee) ) 
+        eth_transaction = {"from": self.provider.to_checksum_address(self.get_fee_deposit_account()),
+                                "to": self.provider.to_checksum_address(self.get_fee_deposit_account()), 
+                                "value": self.provider.to_wei(0, "ether")}  # transaction example for counting gas
         eth_gas_count = self.provider.eth.estimate_gas(eth_transaction)
         eth_gas_count =  eth_gas_count *  Decimal(config['MULTIPLIER'])
         # for account in account_dict:
@@ -373,7 +374,7 @@ class Token:
             return pd.amount
         
     def get_account_balance_from_fullnode(self, address):
-        balance = Decimal(self.contract.functions.balanceOf(self.provider.toChecksumAddress(address)).call())
+        balance = Decimal(self.contract.functions.balanceOf(self.provider.to_checksum_address(address)).call())
         normalized_balance = balance / Decimal(10** (self.contract.functions.decimals().call()))
         return normalized_balance
 
@@ -419,18 +420,18 @@ class Token:
     def get_coin_transaction_fee(self):
         address = self.get_fee_deposit_account()
         fee = Decimal(config['MAX_PRIORITY_FEE'])
-        gas  = self.contract.functions.transfer(address, int((Decimal(0) * 10** (self.contract.functions.decimals().call())))).estimateGas({'from': address})
+        gas  = self.contract.functions.transfer(address, int((Decimal(0) * 10** (self.contract.functions.decimals().call())))).estimate_gas({'from': address})
         gas = int(gas * Decimal(config['MULTIPLIER']))
         gas_price = self.get_gas_price()
-        max_fee_per_gas = ( Decimal(self.provider.fromWei(gas_price, "ether")) + Decimal(fee) ) #* Decimal(config['MULTIPLIER'])
+        max_fee_per_gas = (Decimal(self.provider.from_wei(gas_price, "ether")) + Decimal(fee) ) #* Decimal(config['MULTIPLIER'])
         need_crypto = gas * max_fee_per_gas
         return need_crypto
 
     def get_gas_price(self):
-        return self.provider.eth.gasPrice
+        return self.provider.eth.gas_price
 
     def check_eth_address(self, address):
-        return self.provider.isAddress(address)
+        return self.provider.is_address(address)
 
     def get_fee_deposit_account(self):
         try:
@@ -448,12 +449,12 @@ class Token:
         
     def get_fee_deposit_account_balance(self):
         address = self.get_fee_deposit_account()
-        amount = Decimal(self.provider.fromWei(self.provider.eth.get_balance(address), "ether"))
+        amount = Decimal(self.provider.from_wei(self.provider.eth.get_balance(address), "ether"))
         return amount
     
     def get_fee_deposit_token_balance(self):
         deposit_account = self.get_fee_deposit_account()
-        balance = Decimal(self.contract.functions.balanceOf(self.provider.toChecksumAddress(deposit_account)).call())
+        balance = Decimal(self.contract.functions.balanceOf(self.provider.to_checksum_address(deposit_account)).call())
         normalized_balance = balance / Decimal(10** (self.contract.functions.decimals().call()))
         return normalized_balance
     
@@ -467,14 +468,14 @@ class Token:
     
         need_tokens = 0 
         for payout in payout_list:
-            if not self.provider.isAddress(payout['dest']):
+            if not self.provider.is_address(payout['dest']):
                 raise Exception(f"Address {payout['dest']} is not valid blockchain address") 
             need_tokens = need_tokens + payout['amount']
 
         for payout in payout_list:
-            if not self.provider.isChecksumAddress(payout['dest']):
+            if not self.provider.is_checksum_address(payout['dest']):
                 logger.warning(f"Provided address {payout['dest']} is not checksum address, converting to checksum address")
-                payout['dest'] = self.provider.toChecksumAddress(payout['dest'])
+                payout['dest'] = self.provider.to_checksum_address(payout['dest'])
                 logger.warning(f"Changed to {payout['dest']} which is checksum address")
         
         have_tokens = self.get_fee_deposit_token_balance()
@@ -483,10 +484,10 @@ class Token:
         
         payout_account = self.get_fee_deposit_account()
         
-        gas  = self.contract.functions.transfer(payout_list[0]['dest'], int((Decimal(payout_list[0]['amount']) * 10** (self.contract.functions.decimals().call())))).estimateGas({'from': payout_account})
+        gas  = self.contract.functions.transfer(payout_list[0]['dest'], int((Decimal(payout_list[0]['amount']) * 10** (self.contract.functions.decimals().call())))).estimate_gas({'from': payout_account})
         gas = int(gas * Decimal(config['MULTIPLIER']))
         gas_price = self.get_gas_price()
-        max_fee_per_gas = ( Decimal(self.provider.fromWei(gas_price, "ether")) + Decimal(fee) ) #* Decimal(config['MULTIPLIER'])
+        max_fee_per_gas = ( Decimal(self.provider.from_wei(gas_price, "ether")) + Decimal(fee) ) #* Decimal(config['MULTIPLIER'])
         need_crypto = gas * max_fee_per_gas
         need_crypto_for_multipayout = need_crypto * len(payout_list) # approximate сalc just for checking 
         have_crypto = self.get_fee_deposit_account_balance()
@@ -496,21 +497,21 @@ class Token:
             nonce = self.provider.eth.get_transaction_count(payout_account)
             for payout in payout_list:
 
-                gas  = self.contract.functions.transfer(payout['dest'], int((Decimal(payout['amount']) * 10** (self.contract.functions.decimals().call())))).estimateGas({'from': payout_account})
+                gas  = self.contract.functions.transfer(payout['dest'], int((Decimal(payout['amount']) * 10** (self.contract.functions.decimals().call())))).estimate_gas({'from': payout_account})
                 gas = int(gas * Decimal(config['MULTIPLIER']))
                 gas_price = self.get_gas_price()
-                max_fee_per_gas = ( Decimal(self.provider.fromWei(gas_price, "ether")) + Decimal(fee) ) #* Decimal(config['MULTIPLIER'])
+                max_fee_per_gas = ( Decimal(self.provider.from_wei(gas_price, "ether")) + Decimal(fee) ) #* Decimal(config['MULTIPLIER'])
 
-                contract_call = self.contract.functions.transfer(self.provider.toChecksumAddress(payout['dest']),
+                contract_call = self.contract.functions.transfer(self.provider.to_checksum_address(payout['dest']),
                                                                  int((Decimal(payout['amount']) * 10** (self.contract.functions.decimals().call()))))
-                unsigned_txn = contract_call.buildTransaction({'from': self.provider.toChecksumAddress(payout_account), 
+                unsigned_txn = contract_call.build_transaction({'from': self.provider.to_checksum_address(payout_account), 
                                                                'gas':  gas,
-                                                               'maxFeePerGas': self.provider.toWei(max_fee_per_gas, 'ether'),
-                                                               'maxPriorityFeePerGas': self.provider.toWei(Decimal(fee), 'ether'),
+                                                               'maxFeePerGas': self.provider.to_wei(max_fee_per_gas, 'ether'),
+                                                               'maxPriorityFeePerGas': self.provider.to_wei(Decimal(fee), 'ether'),
                                                                'nonce': nonce,
                                                                'chainId': self.provider.eth.chain_id})   
                 signed_txn = self.provider.eth.account.sign_transaction(unsigned_txn, private_key= self.get_seed_from_address(payout_account)) 
-                txid = self.provider.eth.sendRawTransaction(signed_txn.rawTransaction) 
+                txid = self.provider.eth.send_raw_transaction(signed_txn.raw_transaction) 
 
                 payout_results.append({
                 "dest": payout['dest'],
@@ -531,9 +532,9 @@ class Token:
             raise Exception(f"Address {destination} is not valid blockchain address")     
         if not self.check_eth_address(account):
             raise Exception(f"Address {account} is not valid blockchain address")  
-        if not self.provider.isChecksumAddress(destination):
+        if not self.provider.is_checksum_address(destination):
                 logger.warning(f"Provided address {destination} is not checksum address, converting to checksum address")
-                destination = self.provider.toChecksumAddress(destination)
+                destination = self.provider.to_checksum_address(destination)
                 logger.warning(f"Changed to {destination} which is checksum address")         
         if account == destination:
             logger.warning(f"Fee-deposit account, skip")
@@ -550,48 +551,48 @@ class Token:
             return False
         else:            
             fee = Decimal(config['MAX_PRIORITY_FEE'])
-            gas  = self.contract.functions.transfer(destination, int((Decimal(can_send) * 10** (self.contract.functions.decimals().call())))).estimateGas({'from': account})
+            gas  = self.contract.functions.transfer(destination, int((Decimal(can_send) * 10** (self.contract.functions.decimals().call())))).estimate_gas({'from': account})
             gas = int(gas * Decimal(config['MULTIPLIER']))
             gas_price = self.get_gas_price()
-            max_fee_per_gas = ( Decimal(self.provider.fromWei(gas_price, "ether")) + Decimal(fee) ) #* Decimal(config['MULTIPLIER'])
+            max_fee_per_gas = ( Decimal(self.provider.from_wei(gas_price, "ether")) + Decimal(fee) ) 
             need_crypto = gas * max_fee_per_gas
             # if there is not enough BNB for sending tokens
-            logger.warning(f'gas: {str(gas)}\n gas_price: {str(gas_price)}\n need_crypto: {str(need_crypto)}\n balance: {str(Decimal(self.provider.fromWei(self.provider.eth.get_balance(account), "ether"))  )}')
-            if Decimal(self.provider.fromWei(self.provider.eth.get_balance(account), "ether")) < need_crypto:            
-                need_to_send = need_crypto - self.provider.fromWei(self.provider.eth.get_balance(account), "ether") 
-                transaction = {"from": self.provider.toChecksumAddress(self.get_fee_deposit_account()),
-                               "to": self.provider.toChecksumAddress(account), 
-                               "value": self.provider.toWei(0, "ether")}  # transaction example for counting gas
+            logger.warning(f'gas: {str(gas)}\n gas_price: {str(gas_price)}\n need_crypto: {str(need_crypto)}\n balance: {str(Decimal(self.provider.from_wei(self.provider.eth.get_balance(account), "ether"))  )}')
+            if Decimal(self.provider.from_wei(self.provider.eth.get_balance(account), "ether")) < need_crypto:            
+                need_to_send = need_crypto - self.provider.from_wei(self.provider.eth.get_balance(account), "ether") 
+                transaction = {"from": self.provider.to_checksum_address(self.get_fee_deposit_account()),
+                               "to": self.provider.to_checksum_address(account), 
+                               "value": self.provider.to_wei(0, "ether")}  # transaction example for counting gas
                 gas_coin_count = int(self.provider.eth.estimate_gas(transaction) *  Decimal(config['MULTIPLIER'])) #make it bigger for sure
-                max_fee_per_gas_coin = ( Decimal(self.provider.fromWei(gas_price, "ether")) + Decimal(fee) ) * Decimal(config['MULTIPLIER'])
+                max_fee_per_gas_coin = ( Decimal(self.provider.from_wei(gas_price, "ether")) + Decimal(fee) ) * Decimal(config['MULTIPLIER'])
 
                 tx = {
-                    'from': self.provider.toChecksumAddress(self.get_fee_deposit_account()), 
-                    'to': self.provider.toChecksumAddress(account),
-                    'value': self.provider.toHex(self.provider.toWei(need_to_send, "ether")),
+                    'from': self.provider.to_checksum_address(self.get_fee_deposit_account()), 
+                    'to': self.provider.to_checksum_address(account),
+                    'value': self.provider.to_hex(self.provider.to_wei(need_to_send, "ether")),
                     'nonce': self.provider.eth.get_transaction_count(self.get_fee_deposit_account()),
-                    'gas':  self.provider.toHex(gas_coin_count),
-                    'maxFeePerGas': self.provider.toHex(self.provider.toWei(max_fee_per_gas_coin, 'ether')),
-                    'maxPriorityFeePerGas': self.provider.toHex(self.provider.toWei(fee, "ether")),
+                    'gas':  self.provider.to_hex(gas_coin_count),
+                    'maxFeePerGas': self.provider.to_hex(self.provider.to_wei(max_fee_per_gas_coin, 'ether')),
+                    'maxPriorityFeePerGas': self.provider.to_hex(self.provider.to_wei(fee, "ether")),
                     'chainId': self.provider.eth.chain_id
                 }
                 signed_tx = self.provider.eth.account.sign_transaction(tx, self.get_seed_from_address(self.get_fee_deposit_account()))
-                txid = self.provider.eth.send_raw_transaction(signed_tx.rawTransaction)
+                txid = self.provider.eth.send_raw_transaction(signed_tx.raw_transaction)
     
                
                 logger.warning(f'send coins to token account: {str(txid.hex())}')
                 time.sleep(int(config['SLEEP_AFTER_SEEDING']))
 
-            contract_call = self.contract.functions.transfer(self.provider.toChecksumAddress(destination),
+            contract_call = self.contract.functions.transfer(self.provider.to_checksum_address(destination),
                                                              int((Decimal(can_send) * 10** (self.contract.functions.decimals().call()))))
-            unsigned_txn = contract_call.buildTransaction({'from': self.provider.toChecksumAddress(account.lower()), 
+            unsigned_txn = contract_call.build_transaction({'from': self.provider.to_checksum_address(account.lower()), 
                                                            'gas':  gas,
-                                                           'maxFeePerGas': self.provider.toWei(max_fee_per_gas, 'ether'),
-                                                           'maxPriorityFeePerGas':   self.provider.toWei(Decimal(config['MAX_PRIORITY_FEE']), 'ether'), # without * Decimal(config['MULTIPLIER'])
+                                                           'maxFeePerGas': self.provider.to_wei(max_fee_per_gas, 'ether'),
+                                                           'maxPriorityFeePerGas':   self.provider.to_wei(Decimal(config['MAX_PRIORITY_FEE']), 'ether'), # without * Decimal(config['MULTIPLIER'])
                                                            'nonce': self.provider.eth.get_transaction_count(account),
                                                            'chainId': self.provider.eth.chain_id})   
             signed_txn = self.provider.eth.account.sign_transaction(unsigned_txn, private_key= self.get_seed_from_address(account)) 
-            txid = self.provider.eth.sendRawTransaction(signed_txn.rawTransaction)                                            
+            txid = self.provider.eth.send_raw_transaction(signed_txn.raw_transaction)                                            
     
             results.append({
                 "dest": destination,

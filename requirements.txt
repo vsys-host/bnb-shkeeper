@@ -12,10 +12,6 @@ click-repl==0.2.0
 cytoolz==0.12.0
 Deprecated==1.2.13
 ecdsa==0.15
-eth-abi==2.2.0
-eth-hash==0.3.3
-eth-typing==2.3.0
-eth-utils==1.10.0
 Flask==2.2.2
 gunicorn==20.1.0
 h11==0.13.0
@@ -31,7 +27,6 @@ SQLAlchemy==1.4
 pymysql==1.0.2
 MarkupSafe==2.1.1
 packaging==21.3
-parsimonious==0.8.1
 prometheus-client==0.16.0
 prompt-toolkit==3.0.30
 pycryptodome==3.15.0
@@ -46,9 +41,8 @@ toolz==0.12.0
 urllib3==1.26.12
 vine==5.0.0
 wcwidth==0.2.5
-websockets==9.1
 Werkzeug==2.2.2
 wrapt==1.14.1
 zipp==3.8.1
-web3==5.31.3
+web3==7.12.0
 cryptography==41.0.5
