@@ -18,10 +18,6 @@ from .logging import logger
 from .token import Token, get_all_accounts
 
 
-
-w3 = Web3(HTTPProvider(config["FULLNODE_URL"], request_kwargs={'timeout': int(config['FULLNODE_TIMEOUT'])}))
-w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0) 
-
 def handle_event(transaction):        
     logger.info(f'new transaction: {transaction!r}')
 
@@ -31,6 +27,10 @@ def log_loop(last_checked_block, check_interval):
     from app import create_app
     app = create_app()
     app.app_context().push()
+
+    w3 = Web3(HTTPProvider(config["FULLNODE_URL"], request_kwargs={'timeout': int(config['FULLNODE_TIMEOUT'])}))
+    w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0) 
+    
 
     while True:
         
@@ -93,6 +93,9 @@ def events_listener():
     from app import create_app
     app = create_app()
     app.app_context().push()
+
+    w3 = Web3(HTTPProvider(config["FULLNODE_URL"], request_kwargs={'timeout': int(config['FULLNODE_TIMEOUT'])}))
+    w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0) 
 
     if (not Settings.query.filter_by(name = "last_block").first()) and (config['LAST_BLOCK_LOCKED'].lower() != 'true'):
         logger.warning(f"Changing last_block to a last block on a fullnode, because cannot get it in DB")
