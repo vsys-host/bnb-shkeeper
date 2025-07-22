@@ -33,7 +33,7 @@ def get_all_metrics():
         response = {}
         last_fullnode_block_number = w3.eth.block_number
         response['last_fullnode_block_number'] = last_fullnode_block_number
-        response['last_fullnode_block_timestamp'] = w3.eth.get_block(w3.toHex(last_fullnode_block_number))['timestamp']
+        response['last_fullnode_block_timestamp'] = w3.eth.get_block(w3.to_hex(last_fullnode_block_number))['timestamp']
     
         geth_version = w3.client_version
         geth_version = geth_version.split('v')[1].split('-')[0]
